@@ -1,34 +1,32 @@
-// Connect to the WebSocket server
+// Подключение к WebSocket-серверу
 const socket = new WebSocket('ws://localhost:8765');
 
-// When the WebSocket is open, log the connection
-socket.onopen = () => {
+// Когда WebSocket открыт, логируем подключение
+socket.addEventListener('open', function () {
     console.log('Connected to the WebSocket server');
-};
+});
 
-// When the WebSocket receives a message (a game frame)
-socket.onmessage = (event) => {
+// Когда WebSocket получает сообщение (игровой кадр)
+socket.addEventListener('message', function (event) {
     const frame = event.data;
     console.log('Received frame:', frame);
 
-    // Display the game frame or update the board here
+    // Отображение игрового кадра или обновление доски
     const gameBoard = document.getElementById('game-board');
-    gameBoard.textContent = frame;  // Example: display raw frame for now
-};
+    gameBoard.textContent = frame; // Пример: отображение сырого кадра
+});
 
-// Handle errors (e.g., if the WebSocket closes unexpectedly)
-socket.onerror = (error) => {
+// Обработка ошибок (например, если WebSocket неожиданно закроется)
+socket.addEventListener('error', function (error) {
     console.error('WebSocket Error:', error);
-};
+});
 
-// When the WebSocket connection is closed
-socket.onclose = () => {
+// Когда WebSocket-соединение закрыто
+socket.addEventListener('close', function () {
     console.log('WebSocket connection closed');
-};
+});
 
-// Function to start a new game (could send a message to the server if needed)
-function startGame() {
+// Начало новой игры
+startGame.addEventListener('click', function() {
     console.log('Starting new game...');
-    // You can send a message to the server to start the game if necessary
-    socket.send('start_game');
-}
+});
