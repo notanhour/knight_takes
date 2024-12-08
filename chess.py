@@ -1,6 +1,48 @@
 import pygame as pg
+import mysql.connector
+import sys
 
-pg.init()
+
+class PuzzleDataBase:
+    def __init__(self):
+        self.connection = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="koliaprivet",
+            database="puzzle_db"
+        )
+        self.cursor = self.connection.cursor()
+        self.puzzle_index = 0
+
+    def _get_puzzle(self, index=None):
+        query = f"SELECT * FROM puzzles LIMIT 1 OFFSET {index}"
+        self.cursor.execute(query)
+        puzzle = self.cursor.fetchone()
+        if puzzle:
+            return puzzle
+        return None
+    
+    def get_total_puzzles(self):
+        self.cursor.execute("SELECT COUNT(*) FROM puzzles")
+        total = self.cursor.fetchone()[0]
+        return total
+    
+    def get_next_puzzle(self):
+        puzzle = self._get_puzzle(self.puzzle_index)
+        if puzzle:
+            self.puzzle_index += 1
+        return puzzle
+    
+    def get_puzzle(self, index):
+        return self._get_puzzle(index)
+
+    def reset(self):
+        self.puzzle_index = 0
+
+    def close(self):
+        self.cursor.close()
+        self.connection.close()
+
 
 board_size = 800
 square_size = board_size / 8
@@ -9,11 +51,11 @@ screen = pg.display.set_mode((board_size, board_size))
 LIGHT = (222, 227, 230)
 DARK = (140, 162, 173)
 
+
 class Board:
     def __init__(self):
         self.grid = [[None for _ in range(8)] for _ in range(8)]  # Создаем пустую 8x8 доску
         self.records = []
-        self.setup()
 
     def draw(self):
         # Отрисовка клеток
@@ -29,15 +71,33 @@ class Board:
                     screen.blit(piece.image, (col * square_size, row * square_size))
 
     # Инициализация фигур на их начальных позициях
-    def setup(self):
-        for col in range(8):
-            self.grid[1][col] = Pawn("black", (1, col))
-            self.grid[6][col] = Pawn("white", (6, col))
+    def setup(self, fen=None):
+        self.grid = [[None for _ in range(8)] for _ in range(8)]
+        if fen:
+            lines = fen.split()[0].split("/")
+            board = []
+            for s in lines:
+                horizontal = []
+                for character in s:
+                    if character.isdigit():
+                        horizontal.extend([" "] * int(character))
+                    else:
+                        horizontal.append(character)
+                board.append(horizontal)
+            for row in range(8):
+                for col in range(8):
+                    self.grid[row][col] = self.character_to_piece(board[row][col], (row, col))
+                    
+                
+        else:
+            for col in range(8):
+                self.grid[1][col] = Pawn("black", (1, col))
+                self.grid[6][col] = Pawn("white", (6, col))
 
-        pieces = [Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook]
-        for col, piece in enumerate(pieces):
-            self.grid[0][col] = piece("black", (0, col))
-            self.grid[7][col] = piece("white", (7, col))
+            pieces = [Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook]
+            for col, piece in enumerate(pieces):
+                self.grid[0][col] = piece("black", (0, col))
+                self.grid[7][col] = piece("white", (7, col))
 
         self.save_board_state()
 
@@ -99,8 +159,6 @@ class Board:
                     if len(legal_moves) > 0:
                         return False
         return True
-
-
     
     def highlight_moves(self, moves, selected_piece):
         move_highlight = pg.Surface((square_size, square_size), pg.SRCALPHA)
@@ -114,7 +172,7 @@ class Board:
             else:
                 screen.blit(move_highlight, (col * square_size, row * square_size))
 
-    def move_piece(self, piece, row, col):
+    def move_piece(self, piece, row, col, record=True):
         _row, _col = piece.position
         self.grid[_row][_col] = None
 
@@ -140,16 +198,36 @@ class Board:
 
         # Превращение пешки
         if isinstance(piece, Pawn) and (row == 0 or row == 7):
-            self.grid[row][col] = Queen(piece.color, (row, col))
+            self.grid[row][col] = piece = Queen(piece.color, (row, col))
         else:
-            piece.position = (row, col)
             self.grid[row][col] = piece
+            piece.position = (row, col)  # Новая позиция фигуры
 
         if isinstance(piece, (Pawn, King, Rook)):
             piece.has_moved = True
 
-        self.save_board_state()
-            
+        if record:
+            self.save_board_state()
+
+    def character_to_piece(self, character, position):
+        color = "white" if character.isupper() else "black"
+
+        match character.lower():
+            case "p":
+                return Pawn(color, position)
+            case "r":
+                return Rook(color, position)
+            case "n":
+                return Knight(color, position)
+            case "b":
+                return Bishop(color, position)
+            case "q":
+                return Queen(color, position)
+            case "k":
+                return King(color, position)
+        
+        return None
+
 
 class Piece:
     def __init__(self, color, position):
@@ -371,20 +449,30 @@ class Game:
         self.turn = "white"
         self.selected_piece = None
         self.legal_moves = []
-        self.running = True
-        self.loop()
+        self.running = None
 
-    def loop(self):
+        self.mode = None
+        self.puzzle_moves = []
+        self.step_index = 0
+
+    def set(self, mode="normal", fen=None, puzzle_moves=None):
+        self.running = True
+        self.mode = mode
+        if mode == "puzzle" and puzzle_moves:
+            self.puzzle_moves = puzzle_moves.split()
+            self.step_index = 0
+            self.turn = "white" if fen.split()[1] == "w" else "black"
+        self.board.setup(fen)  # Если fen is None, то на начальные позиции
+
+    def translate_to_coordinates(self, notational):
+        start = (8 - int(notational[1]), ord(notational[0]) - ord("a"))
+        end = (8 - int(notational[3]), ord(notational[2]) - ord("a"))
+        return start, end
+
+    def run(self):
         while self.running:
             for event in pg.event.get():
-                if event.type == pg.QUIT:
-                    self.running = False
-                if event.type == pg.KEYDOWN and event.key == pg.K_ESCAPE:
-                    self.running = False
-                if event.type == pg.MOUSEBUTTONDOWN:
-                    row, col = int(event.pos[1] / square_size), int(event.pos[0] / square_size)
-                    self.handle_piece(row, col)
-
+                self.handle_event(event)
             if not self.running:
                 break
 
@@ -393,22 +481,88 @@ class Game:
             self.board.highlight_moves(self.legal_moves, self.selected_piece)
             pg.display.flip()
 
-        pg.quit()
+    def handle_event(self, event):
+        if event.type == pg.QUIT or event.type == pg.KEYDOWN and event.key == pg.K_ESCAPE:
+            self.running = False
+            pg.quit()
+        elif event.type == pg.MOUSEBUTTONDOWN:
+            row, col = int(event.pos[1] / square_size), int(event.pos[0] / square_size)
+            self.handle_piece(row, col)
         
     def handle_piece(self, row, col):
         piece = self.board.grid[row][col]
         if piece and piece.color == self.turn:
-            self.selected_piece = piece
-            self.legal_moves = piece.get_legal_moves(self.board)
+                self.selected_piece = piece
+                self.legal_moves = piece.get_legal_moves(self.board)
         elif self.selected_piece and (row, col) in self.legal_moves:
-            self.board.move_piece(self.selected_piece, row, col)
-            self.turn = "black" if self.turn == "white" else "white"
-            if self.board.is_checkmate(self.turn) or self.board.is_pat(self.turn):
-                self.running = False
+            if self.mode == "normal":
+                self.board.move_piece(self.selected_piece, row, col)
+                self.turn = "black" if self.turn == "white" else "white"
+                if self.board.is_checkmate(self.turn) or self.board.is_pat(self.turn):
+                    self.running = False
+            elif self.mode == "puzzle":
+                expected = self.puzzle_moves[self.step_index]
+                start_position, end_position = self.translate_to_coordinates(expected)
+                if self.selected_piece.position != start_position or (row, col) != end_position:
+                    pass  # Добавить логику наказания за неправильный ход
+                else:
+                    self.board.move_piece(self.selected_piece, row, col)
+                    self.turn = "black" if self.turn == "white" else "white"
+                    self.step_index += 1
+                    if self.step_index == len(self.puzzle_moves):
+                        print("Puzzle solved!")
+                        self.running = False
             self.selected_piece = None
             self.legal_moves = []
         else:
             self.legal_moves = []
 
 
-game = Game()
+def main():
+    pg.init()
+
+    game = Game()
+    puzzle_db = PuzzleDataBase()
+
+    args = sys.argv
+
+    if len(args) < 2:
+        print("Error: Not enough arguments provided.")
+        exit(1)
+    
+    mode = args[1]
+
+    if mode not in ("normal", "puzzle"):
+        print(f"Error: '{mode}' is not a valid mode. Enter 'normal' or 'puzzle'.")
+        sys.exit(1)
+
+    if mode == "normal":
+        game.set(mode)
+
+    elif mode == "puzzle":
+        if len(args) < 3:
+            print("Error: Puzzle index is required for 'puzzle' mode.")
+            exit(1)
+
+        try:
+            puzzle_index = int(args[2])
+        except ValueError:
+            print("Error: Puzzle number must be an integer.")
+            sys.exit(1)
+
+        try:
+            puzzle = puzzle_db.get_puzzle(puzzle_index)
+        except ValueError:
+            print(f"Error: No puzzle found for index {puzzle_index}")
+            exit(1)
+        
+        game.set(mode, fen=puzzle[1], puzzle_moves=puzzle[2])
+    
+    try:
+        game.run()
+    finally:
+        puzzle_db.close()
+
+
+if __name__ == "__main__":
+    main()
