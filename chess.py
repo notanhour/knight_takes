@@ -547,7 +547,7 @@ def main():
         try:
             puzzle_index = int(args[2])
         except ValueError:
-            print("Error: Puzzle number must be an integer.")
+            print("Error: Puzzle index must be an integer.")
             sys.exit(1)
 
         try:
