@@ -1,5 +1,6 @@
 import pygame as pg
 import mysql.connector
+import random
 import sys
 
 
@@ -56,19 +57,28 @@ class Board:
     def __init__(self):
         self.grid = [[None for _ in range(8)] for _ in range(8)]  # Создаем пустую 8x8 доску
         self.records = []
+        self.is_flipped = False  # Флаг переворота доски
 
     def draw(self):
-        # Отрисовка клеток
         for row in range(8):
             for col in range(8):
-                color = LIGHT if (row + col) % 2 == 0 else DARK
+                # Отрисовка клеток
+                _row, _col = self._translate_coordinates(row, col)
+                color = LIGHT if (_row + _col) % 2 == 0 else DARK
                 pg.draw.rect(screen, color, pg.Rect(col * square_size, row * square_size, square_size, square_size))
-        # Отрисовка фигур
-        for row in range(8):
-            for col in range(8):
-                piece = self.grid[row][col]
+
+                # Отрисовка фигур
+                piece = self.grid[_row][_col]
                 if piece:
                     screen.blit(piece.image, (col * square_size, row * square_size))
+
+    def flip(self):
+        self.is_flipped = not self.is_flipped
+
+    def _translate_coordinates(self, row, col):
+        if self.is_flipped:
+            return 7 - row, 7 - col
+        return row, col
 
     # Инициализация фигур на их начальных позициях
     def setup(self, fen=None):
@@ -87,8 +97,6 @@ class Board:
             for row in range(8):
                 for col in range(8):
                     self.grid[row][col] = self.character_to_piece(board[row][col], (row, col))
-                    
-                
         else:
             for col in range(8):
                 self.grid[1][col] = Pawn("black", (1, col))
@@ -166,11 +174,12 @@ class Board:
         capture_highlight = pg.Surface((square_size, square_size), pg.SRCALPHA)
         pg.draw.circle(capture_highlight, (50, 50, 50, 120), (square_size / 2, square_size / 2), square_size / 2, 7)
         for row, col in moves:
+            _row, _col = self._translate_coordinates(row, col)
             target_piece = self.grid[row][col]
             if target_piece and target_piece.color != selected_piece.color:
-                screen.blit(capture_highlight, (col * square_size, row * square_size))
+                screen.blit(capture_highlight, (_col * square_size, _row * square_size))
             else:
-                screen.blit(move_highlight, (col * square_size, row * square_size))
+                screen.blit(move_highlight, (_col * square_size, _row * square_size))
 
     def move_piece(self, piece, row, col, record=True):
         _row, _col = piece.position
@@ -435,12 +444,32 @@ class Pawn(Piece):
         return moves
     
 
-class Player:
-    pass
+class Man:
+    def __init__(self, color):
+        self.color = color
+
+    def make_move(self, board):
+        pass  # Ход обрабатывается через события
 
 
-class AI:
-    pass
+class Computer:
+    def __init__(self, color):
+        self.color = color
+
+    def make_move(self, board):
+        all_legal_moves = []
+        for row in range(8):
+            for col in range(8):
+                piece = board.grid[row][col]
+                if piece and piece.color == self.color:
+                    legal_moves = piece.get_legal_moves(board)
+                    for move in legal_moves:
+                        all_legal_moves.append((piece, move))
+        
+        if not all_legal_moves:
+            return
+        
+        return random.choice(all_legal_moves) if all_legal_moves else (None, None)
 
 
 class Game:
@@ -454,6 +483,22 @@ class Game:
         self.mode = None
         self.puzzle_moves = []
         self.step_index = 0
+
+        # Игроки (Man | Computer)
+        self.player_w = None
+        self.player_b = None
+
+        self.last_turn = "white"
+
+        self.think_time = 0
+
+    def set_players(self, a, b):
+        if a.color == "white":
+            self.player_w = a
+            self.player_b = b
+        else:
+            self.player_w = b
+            self.player_b = a
 
     def set(self, mode="normal", fen=None, puzzle_moves=None):
         self.running = True
@@ -473,23 +518,59 @@ class Game:
         while self.running:
             for event in pg.event.get():
                 self.handle_event(event)
+
             if not self.running:
                 break
+
+            if self.last_turn != self.turn:
+                self.board.flip()
+                self.last_turn = self.turn
+
+            # Если играет компьютер, то добавляем delay
+            running_time = pg.time.get_ticks()
+
+            if self.turn == "white" and isinstance(self.player_w, Computer) or self.turn == "black" and isinstance(self.player_b, Computer):
+                if self.think_time == 0:
+                    self.think_time = running_time + 2000
+                if running_time > self.think_time:
+                    if self.turn == "white":
+                        self.handle_turn(self.player_w)
+                    else:
+                        self.handle_turn(self.player_b)
+                    self.think_time = 0
 
             screen.fill(LIGHT)
             self.board.draw()
             self.board.highlight_moves(self.legal_moves, self.selected_piece)
             pg.display.flip()
 
+    def handle_turn(self, player):
+        if isinstance(player, Man):
+            return  # Ход обрабатывается через события
+        elif isinstance(player, Computer):
+            piece, move = player.make_move(self.board)
+            if piece and move:
+                row, col = move
+                self.board.move_piece(piece, row, col)
+                self.turn = "black" if self.turn == "white" else "white"
+            if self.board.is_checkmate(self.turn):
+                    print(f"Checkmate! {self.turn.capitalize()} loses!")
+                    self.running = False
+            if self.board.is_pat(self.turn):
+                print(f"Stalemate! {self.turn.capitalize()} draws!")
+                self.running = False
+
+
     def handle_event(self, event):
         if event.type == pg.QUIT or event.type == pg.KEYDOWN and event.key == pg.K_ESCAPE:
             self.running = False
             pg.quit()
         elif event.type == pg.MOUSEBUTTONDOWN:
-            row, col = int(event.pos[1] / square_size), int(event.pos[0] / square_size)
-            self.handle_piece(row, col)
+            row, col = self.board._translate_coordinates(int(event.pos[1] / square_size), int(event.pos[0] / square_size))
+            self.handle_click(row, col)
+
         
-    def handle_piece(self, row, col):
+    def handle_click(self, row, col):
         piece = self.board.grid[row][col]
         if piece and piece.color == self.turn:
                 self.selected_piece = piece
@@ -498,7 +579,11 @@ class Game:
             if self.mode == "normal":
                 self.board.move_piece(self.selected_piece, row, col)
                 self.turn = "black" if self.turn == "white" else "white"
-                if self.board.is_checkmate(self.turn) or self.board.is_pat(self.turn):
+                if self.board.is_checkmate(self.turn):
+                    print(f"Checkmate! {self.turn.capitalize()} loses!")
+                    self.running = False
+                if self.board.is_pat(self.turn):
+                    print(f"Stalemate! {self.turn.capitalize()} draws!")
                     self.running = False
             elif self.mode == "puzzle":
                 expected = self.puzzle_moves[self.step_index]
@@ -530,14 +615,37 @@ def main():
         print("Error: Not enough arguments provided.")
         exit(1)
     
-    mode = args[1]
+    mode = args[1].lower()
 
     if mode not in ("normal", "puzzle"):
         print(f"Error: '{mode}' is not a valid mode. Enter 'normal' or 'puzzle'.")
         sys.exit(1)
 
     if mode == "normal":
+        color = "white"
+        foe = "man"
+
+        if len(args) > 2:
+            color = args[2].lower()
+            if color not in ("white", "black"):
+                print("Error: Invalid color. Enter 'white' or 'black'.")
+                sys.exit(1)
+
+        if len(args) > 3:
+            foe = args[3].lower()
+            if foe not in ("man", "computer"):
+                print(f"Error: '{foe}' is not a valid foe. Enter 'man' or 'computer'.")
+                sys.exit(1)
+            
         game.set(mode)
+
+        if foe == "man":
+            game.set_players(Man("white"), Man("black"))
+        else:
+            game.set_players(Man(color), Computer("black" if color == "white" else "white"))
+        
+        if color == "black" and foe == "computer":
+            game.board.flip()
 
     elif mode == "puzzle":
         if len(args) < 3:
@@ -547,7 +655,7 @@ def main():
         try:
             puzzle_index = int(args[2])
         except ValueError:
-            print("Error: Puzzle number must be an integer.")
+            print("Error: Puzzle index must be an integer.")
             sys.exit(1)
 
         try:
