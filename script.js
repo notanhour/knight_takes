@@ -14,13 +14,13 @@ document.addEventListener("DOMContentLoaded", function() {
 
     if (button1) {
         button1.addEventListener("click", function() {
-            window.location.href = "podsite/offline.html"; 
+            window.location.href = "podsite/puzzles.html"; 
         });
     }
 
     if (button2) {
         button2.addEventListener("click", function() {
-            window.location.href = "podsite/online.html";
+            window.location.href = "podsite/play.html";
         });
     }
 
