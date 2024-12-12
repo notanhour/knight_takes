@@ -1,0 +1,4 @@
+pygame
+mysql-connector-python
+configparser
+python-chess
